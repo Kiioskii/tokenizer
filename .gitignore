@@ -4,3 +4,9 @@ models/**/*
 *.pytest_cache
 *.model
 *.vocab
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/tokenizer.iml
+/.idea/vcs.xml
+/.idea/.gitignore

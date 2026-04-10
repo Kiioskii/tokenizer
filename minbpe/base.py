@@ -74,16 +74,42 @@ class Tokenizer:
         self.vocab = self._build_vocab() # int -> bytes
 
     def train(self, text, vocab_size, verbose=False):
-        # Tokenizer can train a vocabulary of size vocab_size from text
-        raise NotImplementedError
+        ids = list(text.encode("utf-8"))
+        while len(self.merges) < (vocab_size - 256):
+            stats = get_stats(ids)
+            if not stats:
+                break
+
+            pair = max(stats, key=lambda p: (stats[p], -p[0], -p[1]))
+            idx = 256 + len(self.merges)
+
+            ids = merge(ids, pair, idx)
+            self.merges[pair] = idx
+        self.vocab = self._build_vocab()
+        return self
 
     def encode(self, text):
-        # Tokenizer can encode a string into a list of integers
-        raise NotImplementedError
+        ids = list(text.encode("utf-8"))
+        while True:
+            stats = get_stats(ids)
+            if not stats:
+                break
+
+            valid_pairs = [p for p in stats if p in self.merges]
+            if not valid_pairs:
+                break
+
+            pair = min(valid_pairs, key=lambda p: self.merges[p])
+            idx = self.merges[pair]
+
+            ids = merge(ids, pair, idx)
+
+        return ids
 
     def decode(self, ids):
-        # Tokenizer can decode a list of integers into a string
-        raise NotImplementedError
+        tokens = b"".join(self.vocab[idx] for idx in ids)
+        text = tokens.decode("utf-8", errors="replace")
+        return text
 
     def _build_vocab(self):
         # vocab is simply and deterministically derived from merges
