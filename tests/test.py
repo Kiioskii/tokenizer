@@ -1,40 +1,49 @@
 import tiktoken
 
-from minbpe import recover_merges, BasicTokenizer
+from minbpe import BasicTokenizer
+from minbpe.gpt4 import recover_merges
 
 
-def main():
-    text = "hello world!!!? (안녕하세요!) lol123 😉"
-
-    enc = tiktoken.get_encoding("cl100k_base")
-    gpt4_ids = enc.encode(text)
-    gpt4_decoded = enc.decode(gpt4_ids)
-
-    # odzyskanie merges i byte shuffle (jeśli potrzebne)
-    merges = recover_merges(enc._mergeable_ranks)
-    byte_shuffle = {i: enc._mergeable_ranks[bytes([i])] for i in range(256)}
-
-    print("GPT-4 encode:", gpt4_ids)
-    print("GPT-4 decode:", gpt4_decoded)
-
-
+def build_tokenizer_from_gpt4(enc):
     tokenizer = BasicTokenizer()
-    # trenuj tokenizer na tym samym tekście (lub większym korpusie)
-    tokenizer.train(text, vocab_size=512, verbose=False)
+
+    tokenizer.merges = recover_merges(enc._mergeable_ranks)
+
+    tokenizer.vocab = tokenizer._build_vocab()
+
+    tokenizer.byte_shuffle = {
+        i: enc._mergeable_ranks[bytes([i])]
+        for i in range(256)
+    }
+
+    tokenizer.inverse_byte_shuffle = {
+        v: k for k, v in tokenizer.byte_shuffle.items()
+    }
+
+    return tokenizer
+
+
+def run_test(text):
+    enc = tiktoken.get_encoding("cl100k_base")
+
+    # GPT-4
+    gpt_ids = enc.encode(text)
+    gpt_decoded = enc.decode(gpt_ids)
+
+    # Twój tokenizer
+    tokenizer = build_tokenizer_from_gpt4(enc)
     my_ids = tokenizer.encode(text)
     my_decoded = tokenizer.decode(my_ids)
 
-    print("\nBasicTokenizer encode:", my_ids)
-    print("BasicTokenizer decode:", my_decoded)
+    print("TEXT:", text)
+    print("\nGPT-4 IDs:", gpt_ids)
+    print("MY IDS:   ", my_ids)
 
-    # =========================
-    # porównanie wyników
-    # =========================
-    encode_match = gpt4_ids == my_ids
-    decode_match = gpt4_decoded == my_decoded
+    print("GPT DECODE:", gpt_decoded)
+    print("MY DECODE:", my_decoded)
 
-    print("\nEncode match:", encode_match)
-    print("Decode match:", decode_match)
+    print("\nENCODE MATCH:", gpt_ids == my_ids)
+    print("DECODE MATCH:", gpt_decoded == my_decoded)
 
 if __name__ == "__main__":
-    main()
+    run_test("hello world!!!? (안녕하세요!) lol123 😉")
