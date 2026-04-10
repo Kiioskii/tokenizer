@@ -13,7 +13,13 @@ from .base import Tokenizer, get_stats, merge
 import regex as re
 
 GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-
+GPT4_SPECIAL_TOKENS = {
+    '<|endoftext|>': 100257,
+    '<|fim_prefix|>': 100258,
+    '<|fim_middle|>': 100259,
+    '<|fim_suffix|>': 100260,
+    '<|endofprompt|>': 100276
+}
 
 class BasicTokenizer(Tokenizer):
 
@@ -21,6 +27,10 @@ class BasicTokenizer(Tokenizer):
         super().__init__()
         self.inverse_byte_shuffle = None
         self.pattern = GPT4_SPLIT_PATTERN
+        self.special_tokens = GPT4_SPECIAL_TOKENS
+        self.inverse_special_tokens = {
+            v: k for k, v in self.special_tokens.items()
+        }
         self.compiled_pattern = re.compile(self.pattern)
 
         self.byte_shuffle = None
@@ -64,36 +74,89 @@ class BasicTokenizer(Tokenizer):
 
         self.vocab = self._build_vocab()
 
-
     def decode(self, ids):
-        # given ids (list of integers), return Python string
-        text_bytes = b"".join(self.vocab[idx] for idx in ids)
-        unshuffled = bytes(self.inverse_byte_shuffle[b] for b in text_bytes)
-        return unshuffled.decode("utf-8", errors="replace")
+        byte_stream = bytearray()
+        text_parts = []
 
-    def encode(self, text):
-        chunks = self._split(text)
+        for idx in ids:
+            if idx in self.inverse_special_tokens:
+                if byte_stream:
+                    text_parts.append(
+                        bytes(byte_stream).decode("utf-8", errors="replace")
+                    )
+                    byte_stream.clear()
+
+                text_parts.append(self.inverse_special_tokens[idx])
+                continue
+
+            token_bytes = self.vocab[idx]
+
+            if self.inverse_byte_shuffle:
+                token_bytes = bytes(self.inverse_byte_shuffle[b] for b in token_bytes)
+
+            byte_stream.extend(token_bytes)
+
+        if byte_stream:
+            text_parts.append(
+                bytes(byte_stream).decode("utf-8", errors="replace")
+            )
+
+        return "".join(text_parts)
+
+    def encode(self, text, allowed_special=set()):
+        if allowed_special == "all":
+            allowed_special = set(self.special_tokens.keys())
+
         result = []
+        i = 0
 
-        for chunk in chunks:
-            raw_bytes = chunk.encode("utf-8")
-            if self.byte_shuffle:
-                ids = [self.byte_shuffle[b] for b in raw_bytes]
-            else:
-                ids = list(raw_bytes)
+        while i < len(text):
+            matched = False
+            for token, token_id in self.special_tokens.items():
+                if text.startswith(token, i):
+                    if token not in allowed_special:
+                        raise ValueError(f"Special token {token} not allowed")
 
-            while True:
-                stats = get_stats(ids)
-                if not stats:
+                    result.append(token_id)
+                    i += len(token)
+                    matched = True
                     break
 
-                valid_pairs = [p for p in stats if p in self.merges]
-                if not valid_pairs:
+            if matched:
+                continue
+
+            j = i
+            while j < len(text):
+                if any(text.startswith(tok, j) for tok in self.special_tokens):
                     break
+                j += 1
 
-                pair = min(valid_pairs, key=lambda p: self.merges[p])
-                idx = self.merges[pair]
-                ids = merge(ids, pair, idx)
+            chunk = text[i:j]
+            chunks = self._split(chunk)
 
-            result.extend(ids)
+            for chunk in chunks:
+                raw_bytes = chunk.encode("utf-8")
+
+                if self.byte_shuffle:
+                    ids = [self.byte_shuffle[b] for b in raw_bytes]
+                else:
+                    ids = list(raw_bytes)
+
+                while True:
+                    stats = get_stats(ids)
+                    if not stats:
+                        break
+
+                    valid_pairs = [p for p in stats if p in self.merges]
+                    if not valid_pairs:
+                        break
+
+                    pair = min(valid_pairs, key=lambda p: self.merges[p])
+                    idx = self.merges[pair]
+                    ids = merge(ids, pair, idx)
+
+                result.extend(ids)
+
+            i = j
+
         return result
